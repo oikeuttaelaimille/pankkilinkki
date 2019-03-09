@@ -1,0 +1,75 @@
+org: santeri
+app: pankkilinkki-app
+service:
+  name: pankkilinkki
+
+plugins:
+  - serverless-webpack
+  - serverless-python-requirements
+
+provider:
+  name: aws
+  region: eu-north-1
+  stage: ${opt:stage, 'dev'}
+
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - sqs:GetQueueUrl
+        - sqs:SendMessage
+        - sqs:DeleteMessageBatch
+      Resource:
+        - Fn::GetAtt: [TaskQueue, Arn]
+    - Effect: "Allow"
+      Action:
+        - s3:ListBucket
+        - s3:PutObject
+        - s3:GetObject
+        - s3:DeleteObject
+      Resource:
+        Fn::Join: ["", ["arn:aws:s3:::", "${self:custom.bucketName}", "/*"]]
+
+custom:
+  queueName: pankkilinkki-${self:provider.stage}
+  bucketName: pankkilinkki-${self:provider.stage}
+  pythonRequirements:
+    noDeploy:
+      - futures
+
+# Create resources with CloudFormation templates
+resources:
+  - ${file(resources/sqs-queue.yml)}
+
+package:
+  artifact: .serverless/pankkilinkki.zip
+
+functions:
+  handler:
+    handler: handler.handler
+    runtime: python3.7
+    description: Pankkilinkki - handle downloaded files
+    environment:
+      ENDPOINT: ${env:ENDPOINT, 'http://localhost:8000'}
+      API_KEY: ${env:API_KEY, 'secret'}
+    events:
+      - s3:
+          bucket: ${self:custom.bucketName}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: files/
+  linkki:
+    handler: linkki.handler
+    runtime: nodejs10.x
+    description: Pankkilinkki - download files
+    environment:
+      BUCKET: ${self:custom.bucketName}
+      QUEUE: ${self:custom.queueName}
+      USERNAME: ${env:REKISTERI_USERNAME, '10000'}
+      LANGUAGE: "FI"
+    events:
+      - schedule:
+          rate: rate(12 hours)
+      - sqs:
+          batchSize: 1
+          arn:
+            Fn::GetAtt: [TaskQueue, Arn]

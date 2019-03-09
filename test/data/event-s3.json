@@ -1,0 +1,38 @@
+{
+  "Records": [
+    {
+      "eventVersion": "2.1",
+      "eventSource": "aws:s3",
+      "awsRegion": "eu-north-1",
+      "eventTime": "2019-03-10T01:29:13.825Z",
+      "eventName": "ObjectCreated:Put",
+      "userIdentity": {
+        "principalId": "AWS:xxxx:my-project"
+      },
+      "requestParameters": {
+        "sourceIPAddress": "13.48.5.213"
+      },
+      "responseElements": {
+        "x-amz-request-id": "xxxx",
+        "x-amz-id-2": "xxx="
+      },
+      "s3": {
+        "s3SchemaVersion": "1.0",
+        "configurationId": "xxxx",
+        "bucket": {
+          "name": "my-project",
+          "ownerIdentity": {
+            "principalId": "xxx"
+          },
+          "arn": "arn:aws:s3:::my-project"
+        },
+        "object": {
+          "key": "files/2019-03/TL1211.2.tl",
+          "size": 2576,
+          "eTag": "3b35073a790f2ce7b2bc62d776b05fa1",
+          "sequencer": "xxxx"
+        }
+      }
+    }
+  ]
+}

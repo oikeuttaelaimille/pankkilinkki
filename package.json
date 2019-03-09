@@ -1,0 +1,29 @@
+{
+  "name": "pankkilinkki",
+  "description": "Service that will fetch information from bank and act on it.",
+  "version": "1.0.0",
+  "main": "handler.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oikeuttaelaimille/pankkiyhteys.git"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.27",
+    "@types/node": "^10.0.0",
+    "aws-sdk": "^2.476.0",
+    "copy-webpack-plugin": "^5.0.3",
+    "pankkiyhteys": "^1.1.0",
+    "serverless-python-requirements": "^4.3.0",
+    "serverless-webpack": "^5.3.1",
+    "source-map-support": "^0.5.12",
+    "ts-loader": "^6.0.2",
+    "typescript": "^3.5.2",
+    "webpack": "^4.34.0"
+  },
+  "author": "Santeri Hurnanen <santeri@oikeuttaelaimille.fi>",
+  "license": "MIT"
+}

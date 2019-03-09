@@ -1,0 +1,4 @@
+# boto3 is already installed
+simplejson
+requests
+lxml

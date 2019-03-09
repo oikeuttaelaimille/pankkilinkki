@@ -1,0 +1,6 @@
+Resources:
+  TaskQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ${self:custom.queueName}
+      VisibilityTimeout: 600
