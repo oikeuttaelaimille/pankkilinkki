@@ -12,17 +12,17 @@
   },
   "dependencies": {},
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.31",
-    "@types/node": "^10.14.15",
-    "aws-sdk": "^2.506.0",
-    "copy-webpack-plugin": "^5.0.4",
+    "@types/aws-lambda": "^8.10.44",
+    "@types/node": "^12.12.28",
+    "aws-sdk": "^2.625.0",
+    "copy-webpack-plugin": "^5.1.1",
     "pankkiyhteys": "^1.1.1",
-    "serverless-python-requirements": "^5.0.0",
+    "serverless-python-requirements": "^5.1.0",
     "serverless-webpack": "^5.3.1",
-    "source-map-support": "^0.5.13",
-    "ts-loader": "^6.0.4",
-    "typescript": "^3.5.3",
-    "webpack": "^4.39.1"
+    "source-map-support": "^0.5.16",
+    "ts-loader": "^6.2.1",
+    "typescript": "^3.8.2",
+    "webpack": "^4.41.6"
   },
   "author": "Santeri Hurnanen <santeri@oikeuttaelaimille.fi>",
   "license": "MIT"
