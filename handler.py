@@ -1,121 +1,19 @@
+import boto3
 import simplejson as json
 import os
 import requests
-import boto3
-from collections import namedtuple
-from datetime import datetime
-from decimal import Decimal
-from enum import Enum
 from pathlib import Path
-from io import StringIO
 
+from finvoice.tapahtumaluettelo import TapahtumaLuettelo
 
-class Rahayksikko(Enum):
-    EURO = 1
-
-
-class Tila(Enum):
-    ONNISTUNUT = 0
-    TILIA_EI_LOYDY = 1
-    KATE_EI_RIITA = 2
-    EI_MAKSUPALVELUTILI = 3
-    MAKSAJA_PERUUTTANUT = 4
-    PANKKI_PERUUTTANUT = 5
-    PERUUTUS_EI_KOHDISTU = 6
-    VALTUUTUS_PUUTTUU = 7
-    ERAPAIVAVIRHE = 8
-    MUOTOVIRHE = 9
-
-
-class TapahtumaLuettelo:
-    Row = namedtuple(
-        "Row",
-        [
-            "tilinumero",
-            "kirjauspv",
-            "maksupv",
-            "arkistointitunnus",
-            "viite",
-            "nimi",
-            "rahayksikko",
-            "nimen_lahde",
-            "summa",
-            "oikaisutunnus",
-            "valitystapa",
-            "tila",
-        ],
-    )
-
-    @classmethod
-    def parse(cls, content):
-        with StringIO(content) as buffer:
-            return cls(buffer)
-
-    def _to_decimal(self, field):
-        return Decimal("{}.{}".format(field[:-2], field[-2:]))
-
-    def _read_footer(self, footer):
-        self.viitetap_kpl += int(footer[1:7])
-        self.viitetap_summa += self._to_decimal(footer[7:18])
-        self.viiteoik_kpl += int(footer[18:24])
-        self.viiteoik_summa += self._to_decimal(footer[24:35])
-        self.epaonnis_kpl += int(footer[35:41])
-        self.epaonnis_summa += self._to_decimal(footer[41:52])
-
-    def _read_header(self, header):
-        self.kirjoituspv = datetime.strptime(header[1:11], "%y%m%d%H%M")
-
-    def _read_row(self, line):
-        self._rows.append(
-            self.Row(
-                tilinumero=line[1:15],
-                kirjauspv=datetime.strptime(line[15:21], "%y%m%d").date(),
-                maksupv=datetime.strptime(line[21:27], "%y%m%d").date(),
-                arkistointitunnus=line[27:43],
-                viite=line[43:63].lstrip("0"),
-                nimi=line[63:75].replace("[", "Ä").replace("\\", "Ö").rstrip(),
-                rahayksikko=Rahayksikko(int(line[75:76])),
-                nimen_lahde=line[76:77],
-                summa=self._to_decimal(line[77:87]),
-                oikaisutunnus=int(line[87:88]),
-                valitystapa=line[88:89],
-                tila=Tila(int(line[89:90].strip() or 0)),
-            ))
-
-    def __init__(self, buffer):
-        self._rows = []
-        self.viitetap_kpl = 0
-        self.viiteoik_kpl = 0
-        self.epaonnis_kpl = 0
-        self.viitetap_summa = Decimal(0)
-        self.viiteoik_summa = Decimal(0)
-        self.epaonnis_summa = Decimal(0)
-
-        for line in buffer.readlines():
-            # Skip empty lines
-            if not line.strip():
-                continue
-            # Check header magic
-            elif line[0] == "0":
-                self._read_header(line)
-            # Footer magic
-            elif line[0] == "9":
-                self._read_footer(line)
-            else:
-                self._read_row(line)
-
-    def __getitem__(self, index):
-        return self._rows[index]
-
-    def __iter__(self):
-        return iter(self._rows)
-
-    def __len__(self):
-        return len(self._rows)
-
-
+STAGE = os.environ.get('STAGE', default='dev')
 ENDPOINT = os.environ['ENDPOINT']
 API_KEY = os.environ['API_KEY']
+SLACK_WEBHOOK_LOGS = os.environ['SLACK_WEBHOOK_LOGS']
+SLACK_WEBHOOK_INFO = os.environ['SLACK_WEBHOOK_INFO']
+
+WINDOWS_LINE_ENDING = b'\r\n'
+UNIX_LINE_ENDING = b'\n'
 
 
 def is_s3_event(event) -> bool:
@@ -123,7 +21,50 @@ def is_s3_event(event) -> bool:
 
 
 def handle_info(data):
-    print(data.decode('utf-8'))
+    MESSAGE_MAX_LENGHT = 3000
+
+    header, _, body = data.replace(WINDOWS_LINE_ENDING, UNIX_LINE_ENDING).decode('utf-8').partition("\n")
+
+    # Sometimes bank messages have translations separated by newlines.
+    body_first, _, _ = body.partition('\n\n\n')
+
+    # Max length
+    if len(body_first) > MESSAGE_MAX_LENGHT:
+        body_first = (body_first[:(MESSAGE_MAX_LENGHT - 3)] + '...')
+
+    print(header + "\n" + body)
+
+    message = {
+        "blocks": [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": '*Viesti pankilta: ' + header + '*'
+                }
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": body_first
+                }
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"pankkilinkki-{STAGE}"
+                    }
+                ]
+            }
+        ]
+    }
+
+    r = requests.post(SLACK_WEBHOOK_INFO, json=message)
+
+    print(r.status_code)
 
 
 def handle_tl(data):
@@ -160,6 +101,31 @@ def handle_xi(data):
 
 def handle_ri(data):
     raise Exception('Not implemented yet')
+    """
+    payload = {
+        'payments': [{
+            'closeDate': event.maksupv.isoformat(),
+            'archiveId': event.arkistointitunnus,
+            'referenceNumber': event.viite,
+            'amount': event.summa
+        } for event in events]
+    }
+
+    r = requests.post(f'{ENDPOINT}/rekisteri/payment?action=finvoice',
+                      headers={
+                          'API-Key': API_KEY,
+                          'Content-Type': 'application/json'
+                      },
+                      data=json.dumps(payload))
+
+    # Raise exception if error occured.
+    r.raise_for_status()
+
+    res = r.json()
+    res = res['records'] if 'records' in res else 0
+
+    print(f'Modified {res} records')
+    """
 
 
 def handler(event, context):

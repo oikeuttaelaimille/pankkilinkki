@@ -1,9 +1,10 @@
-org: santeri
 app: pankkilinkki-app
+
 service:
   name: pankkilinkki
 
 plugins:
+  - serverless-dotenv-plugin
   - serverless-webpack
   - serverless-python-requirements
 
@@ -11,6 +12,15 @@ provider:
   name: aws
   region: eu-north-1
   stage: ${opt:stage, 'dev'}
+
+  # Set the default RetentionInDays for a CloudWatch LogGroup
+  logRetentionInDays: 365
+
+  environment:
+    # Stage defined with serverless command line flag.
+    STAGE: ${opt:stage, 'dev'}
+    SLACK_WEBHOOK_LOGS: ${env:SLACK_WEBHOOK_LOGS}
+    SLACK_WEBHOOK_INFO: ${env:SLACK_WEBHOOK_INFO}
 
   iamRoleStatements:
     - Effect: "Allow"
@@ -57,15 +67,16 @@ functions:
           event: s3:ObjectCreated:*
           rules:
             - prefix: files/
+
   linkki:
     handler: linkki.handler
-    runtime: nodejs10.x
+    runtime: nodejs12.x
     description: Pankkilinkki - download files
     environment:
       BUCKET: ${self:custom.bucketName}
       QUEUE: ${self:custom.queueName}
-      USERNAME: ${env:REKISTERI_USERNAME, '10000'}
-      LANGUAGE: "FI"
+      USERNAME: ${env:PANKKILINKKI_USERNAME}
+      LANGUAGE: ${env:PANKKILINKKI_LANGUAGE, "FI"}
     events:
       - schedule:
           rate: rate(12 hours)

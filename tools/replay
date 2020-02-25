@@ -1,0 +1,76 @@
+#!/usr/bin/env python
+
+import boto3
+import json
+import subprocess
+import argparse
+import re
+
+from datetime import datetime, timezone
+
+
+def regex_type(regex):
+    pattern = re.compile(regex, flags=re.IGNORECASE)
+
+    return pattern
+    # raise argparse.ArgumentTypeError
+
+
+DEFAULT_BUCKET = 'pankkilinkki-prod'
+DEFAULT_TIMEOUT = 30
+
+parser = argparse.ArgumentParser(description='Replay bank files from s3.')
+parser.add_argument('folder', type=str, help='s3 folder to search')
+parser.add_argument('--regex', type=regex_type, help='regex filename filter',
+                    required=True)
+parser.add_argument('--bucket', default=DEFAULT_BUCKET, help='s3 bucket')
+parser.add_argument('--stage', default='dev', help='runtime environment')
+parser.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT,
+                    help='command timeout')
+parser.add_argument('--dry-run', action='store_true', help='test run')
+
+args = parser.parse_args()
+
+s3 = boto3.resource('s3')
+bucket = s3.Bucket(args.bucket)
+
+for object_summary in bucket.objects.filter(Prefix=args.folder + '/'):
+    if args.regex.search(object_summary.key) is None:
+        continue
+
+    event = json.dumps({
+        "Records": [
+            {
+                "eventVersion": "2.1",
+                "eventSource": "aws:s3",
+                "awsRegion": "eu-north-1",
+                "eventTime": datetime.now(timezone.utc).isoformat(),
+                "eventName": "ObjectCreated:Put",
+                "s3": {
+                    "s3SchemaVersion": "1.0",
+                    "bucket": {
+                        "name": "pankkilinkki-prod",
+                        "arn": "arn:aws:s3:::pankkilinkki-prod"
+                    },
+                    "object": {
+                        "key": object_summary.key
+                    }
+                }
+            }
+        ]
+    })
+
+    command = [
+        'npx',
+        'serverless',
+        'invoke',
+        *['--stage', args.stage],
+        *['-f', 'handler'],
+        *['-d', event]
+    ]
+
+    print(*command[0:-1], f"'{command[-1]}'")
+
+    if not args.dry_run:
+        proc = subprocess.Popen(command)
+        proc.communicate(timeout=args.timeout)

@@ -99,6 +99,7 @@ function isScheduledEvent(event: any): event is ScheduledEvent {
 }
 
 function makeFileKey(userFilename: string, type: string) {
+  // folder name = when file was downloaded.
   const date = new Date();
   const twoDigitMonth = ("0" + (date.getMonth() + 1)).slice(-2);
   const dateFolder = `${date.getFullYear()}-${twoDigitMonth}`;
@@ -112,6 +113,14 @@ async function getKeys() {
   );
 
   return keyFiles.map(item => item.toString());
+}
+
+function* getFileChunk(arr: FileDescriptor[], types: string[], chunkSize = 10) {
+  let files = arr.filter(item => types.includes(item.FileType));
+
+  for (let i = 0; i < files.length; i += chunkSize) {
+    yield files.slice(i, i + chunkSize);
+  }
 }
 
 export const handler: Handler<SQSEvent | ScheduledEvent, void> = async (
@@ -148,8 +157,6 @@ export const handler: Handler<SQSEvent | ScheduledEvent, void> = async (
         .promise();
     }
   } else if (isScheduledEvent(event)) {
-    console.log("Fetching list of new files");
-
     // Enqueue files for download.
     const queueUrl = await sqs
       .getQueueUrl({ QueueName: QUEUE! })
@@ -162,17 +169,20 @@ export const handler: Handler<SQSEvent | ScheduledEvent, void> = async (
         return QueueUrl;
       });
 
-    const chunkSize = 10;
-    const batchRequests = [];
+    console.log(`Fetching list of files`);
+
     const files: FileDescriptor[] = await client.getFileList({
-      FileType: "TL",
       Status: "NEW"
     });
 
     console.log(`Found ${files.length} files`);
 
-    for (let i = 0; i < files.length; i += chunkSize) {
-      const chunk: TaskInfo[] = files.slice(i, i + chunkSize).map(item => ({
+    const batchRequests = [];
+
+    for (const chunk of getFileChunk(files, ["INFO", "RI", "TL", "XI"])) {
+      console.log(`Scheduling ${chunk.length} items`);
+
+      const batch = chunk.map(item => ({
         type: TaskType.DownloadFile,
         payload: item
       }));
@@ -180,14 +190,12 @@ export const handler: Handler<SQSEvent | ScheduledEvent, void> = async (
       const requests = sqs
         .sendMessageBatch({
           QueueUrl: queueUrl,
-          Entries: chunk.map((item, index) => ({
-            MessageBody: JSON.stringify(item),
+          Entries: batch.map((message, index) => ({
+            MessageBody: JSON.stringify(message),
             Id: index.toString()
           }))
         })
         .promise();
-
-      console.log(`Queueing download for ${chunk.length} files`);
 
       batchRequests.push(requests);
     }
