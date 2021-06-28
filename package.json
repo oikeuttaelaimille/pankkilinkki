@@ -10,19 +10,18 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/aws-lambda": "^8.10.31",
-    "@types/node": "^10.14.15",
+    "@types/node": "^15.12.5",
     "aws-sdk": "^2.506.0",
-    "copy-webpack-plugin": "^5.0.4",
+    "copy-webpack-plugin": "^9.0.1",
     "pankkiyhteys": "^1.1.1",
     "serverless-python-requirements": "^5.0.0",
     "serverless-webpack": "^5.3.1",
     "source-map-support": "^0.5.13",
-    "ts-loader": "^6.0.4",
-    "typescript": "^3.5.3",
-    "webpack": "^4.39.1"
+    "ts-loader": "^9.2.3",
+    "typescript": "^4.3.4",
+    "webpack": "^5.41.0"
   },
   "author": "Santeri Hurnanen <santeri@oikeuttaelaimille.fi>",
   "license": "MIT"
