@@ -45,6 +45,9 @@ custom:
   pythonRequirements:
     noDeploy:
       - futures
+      - yapf
+      - flake8
+      - boto3
 
 # Create resources with CloudFormation templates
 resources:
@@ -60,7 +63,8 @@ functions:
     description: Pankkilinkki - handle downloaded files
     environment:
       ENDPOINT: ${env:ENDPOINT, 'http://localhost:8000'}
-      API_KEY: ${env:API_KEY, 'secret'}
+      API_KEY: ${env:API_KEY}
+      API_KEY_B64: ${env:API_KEY_B64}
     events:
       - s3:
           bucket: ${self:custom.bucketName}
