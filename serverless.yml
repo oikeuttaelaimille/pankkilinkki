@@ -1,7 +1,6 @@
-org: santeri
 app: pankkilinkki-app
-service:
-  name: pankkilinkki
+service: pankkilinkki
+useDotenv: true
 
 plugins:
   - serverless-webpack
@@ -12,27 +11,34 @@ provider:
   region: eu-north-1
   stage: ${opt:stage, 'dev'}
 
-  iamRoleStatements:
-    - Effect: "Allow"
-      Action:
-        - sqs:GetQueueUrl
-        - sqs:SendMessage
-        - sqs:DeleteMessageBatch
-      Resource:
-        - Fn::GetAtt: [TaskQueue, Arn]
-    - Effect: "Allow"
-      Action:
-        - s3:ListBucket
-        - s3:PutObject
-        - s3:GetObject
-        - s3:DeleteObject
-      Resource:
-        Fn::Join: ["", ["arn:aws:s3:::", "${self:custom.bucketName}", "/*"]]
+  logRetentionInDays: 180
+  lambdaHashingVersion: 20201221
+
+  iam:
+    role:
+      statements:
+        - Effect: "Allow"
+          Action:
+            - sqs:GetQueueUrl
+            - sqs:SendMessage
+            - sqs:DeleteMessageBatch
+          Resource:
+            - Fn::GetAtt: [TaskQueue, Arn]
+        - Effect: "Allow"
+          Action:
+            - s3:ListBucket
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+          Resource:
+            Fn::Join: ["", ["arn:aws:s3:::", "${self:custom.bucketName}", "/*"]]
 
 custom:
   queueName: pankkilinkki-${self:provider.stage}
   bucketName: pankkilinkki-${self:provider.stage}
   pythonRequirements:
+    dockerizePip: true
+    dockerImage: lambci/lambda:build-python3.8
     noDeploy:
       - futures
 
@@ -46,7 +52,7 @@ package:
 functions:
   handler:
     handler: handler.handler
-    runtime: python3.7
+    runtime: python3.8
     description: Pankkilinkki - handle downloaded files
     environment:
       ENDPOINT: ${env:ENDPOINT, 'http://localhost:8000'}
@@ -59,16 +65,22 @@ functions:
             - prefix: files/
   linkki:
     handler: linkki.handler
-    runtime: nodejs10.x
+    runtime: nodejs14.x
     description: Pankkilinkki - download files
     environment:
       BUCKET: ${self:custom.bucketName}
       QUEUE: ${self:custom.queueName}
-      USERNAME: ${env:REKISTERI_USERNAME, '10000'}
+      USERNAME: ${env:PANKKILINKKI_USERNAME, '10000'}
       LANGUAGE: "FI"
     events:
       - schedule:
           rate: rate(12 hours)
+          enabled: true
+          name: poll
+      - schedule:
+          rate: rate(10 minutes)
+          enabled: true
+          name: key-check
       - sqs:
           batchSize: 1
           arn:
