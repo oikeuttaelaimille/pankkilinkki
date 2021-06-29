@@ -13,6 +13,7 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.31",
     "@types/node": "^15.12.5",
+    "@types/node-fetch": "^2.5.10",
     "aws-sdk": "^2.506.0",
     "copy-webpack-plugin": "^9.0.1",
     "pankkiyhteys": "^1.1.1",
@@ -24,5 +25,8 @@
     "webpack": "^5.41.0"
   },
   "author": "Santeri Hurnanen <santeri@oikeuttaelaimille.fi>",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "node-fetch": "^2.6.1"
+  }
 }

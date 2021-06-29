@@ -4,7 +4,7 @@ const CopyPlugin = require("copy-webpack-plugin");
 
 const entries = {};
 
-Object.keys(slsw.lib.entries).forEach(key => {
+Object.keys(slsw.lib.entries).forEach((key) => {
   // Exclude python files
   if (!slsw.lib.entries[key].match(/\.py$/)) {
     entries[key] = ["./source-map-install.js", slsw.lib.entries[key]];
@@ -16,23 +16,28 @@ module.exports = {
   entry: entries,
   devtool: "source-map",
   plugins: [
-    new CopyPlugin([
-      { from: "./**/*.py", ignore: ["venv/**/*", "node_modules/**/*"] }
-    ])
+    new CopyPlugin({
+      patterns: [
+        {
+          from: "./**/*.py",
+          globOptions: { ignore: ["venv/**/*", "node_modules/**/*"] },
+        },
+      ],
+    }),
   ],
   resolve: {
-    extensions: [".js", ".jsx", ".json", ".ts", ".tsx"]
+    extensions: [".js", ".jsx", ".json", ".ts", ".tsx"],
   },
   output: {
     libraryTarget: "commonjs",
     path: path.join(__dirname, ".webpack"),
-    filename: "[name].js"
+    filename: "[name].js",
   },
   target: "node",
   module: {
     rules: [
       // all files with a `.ts` or `.tsx` extension will be handled by `ts-loader`
-      { test: /\.tsx?$/, loader: "ts-loader" }
-    ]
-  }
+      { test: /\.tsx?$/, loader: "ts-loader" },
+    ],
+  },
 };

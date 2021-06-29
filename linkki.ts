@@ -6,14 +6,18 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
+import fetch from "node-fetch";
+
 import { Osuuspankki, Key } from "pankkiyhteys";
 
 const {
   BUCKET,
   QUEUE,
   USERNAME,
+  SLACK_WEBHOOK_INFO,
+  SLACK_WEBHOOK_LOGS,
   LANGUAGE = "EN" as any,
-  ENVIRONMENT = undefined as any
+  ENVIRONMENT = undefined as any,
 } = process.env;
 
 const TMP_PATH = path.join(os.tmpdir(), "pankkilinkki");
@@ -25,7 +29,7 @@ if (!fs.existsSync(TMP_PATH)) {
 
 const s3 = new S3({
   apiVersion: "2006-03-01",
-  params: { Bucket: BUCKET }
+  params: { Bucket: BUCKET },
 });
 
 const sqs = new SQS();
@@ -48,14 +52,14 @@ function readFile(fileName: string) {
         .getObject({
           Bucket: BUCKET!,
           Key: fileName,
-          ResponseContentEncoding: ""
+          ResponseContentEncoding: "",
         })
         .promise()
         .then(({ Body }) => {
           if (Body instanceof Buffer) {
             // Cache file to local filesystem later.
             setImmediate(() =>
-              fs.writeFile(filePath, Body, err => {
+              fs.writeFile(filePath, Body, (err) => {
                 if (err) {
                   console.warn(`Failed to cache ${fileName}`, err);
                 }
@@ -82,7 +86,7 @@ interface FileDescriptor {
 }
 
 const enum TaskType {
-  DownloadFile
+  DownloadFile,
 }
 
 interface TaskInfo {
@@ -109,18 +113,39 @@ function makeFileKey(userFilename: string, type: string) {
 
 async function getKeys() {
   let keyFiles = await Promise.all(
-    ["privkey.pem", "certificate.pem"].map(file => readFile(file))
+    ["privkey.pem", "certificate.pem"].map((file) => readFile(file))
   );
 
-  return keyFiles.map(item => item.toString());
+  return keyFiles.map((item) => item.toString());
 }
 
 function* getFileChunk(arr: FileDescriptor[], types: string[], chunkSize = 10) {
-  let files = arr.filter(item => types.includes(item.FileType));
+  let files = arr.filter((item) => types.includes(item.FileType));
 
   for (let i = 0; i < files.length; i += chunkSize) {
     yield files.slice(i, i + chunkSize);
   }
+}
+
+async function postSlackMessage(message: any, channel: "logs" | "info") {
+  const hook = channel === "logs" ? SLACK_WEBHOOK_LOGS : SLACK_WEBHOOK_INFO;
+
+  if (hook) {
+    return fetch(hook, {
+      method: "post",
+      body: JSON.stringify(message),
+      headers: { "Content-Type": "application/json" },
+    })
+      .then((res: any) => res.json())
+      .then((json: any) => console.log(json))
+      .catch((response: any) => console.log(response));
+  }
+}
+
+function isAboutToExpire(key: Key) {
+  const dateToCheck = new Date();
+  dateToCheck.setMonth(dateToCheck.getMonth() + 2);
+  return key.expires() < dateToCheck;
 }
 
 export const handler: Handler<SQSEvent | ScheduledEvent, void> = async (
@@ -152,55 +177,105 @@ export const handler: Handler<SQSEvent | ScheduledEvent, void> = async (
         .putObject({
           Key: key,
           Bucket: BUCKET!,
-          Body: content
+          Body: content,
         })
         .promise();
     }
   } else if (isScheduledEvent(event)) {
-    // Enqueue files for download.
-    const queueUrl = await sqs
-      .getQueueUrl({ QueueName: QUEUE! })
-      .promise()
-      .then(({ QueueUrl }) => {
-        if (!QueueUrl) {
-          throw new Error(`Error getting queue url for sqs://${QUEUE}`);
-        }
+    console.log(event);
 
-        return QueueUrl;
-      });
-
-    console.log(`Fetching list of files`);
-
-    const files: FileDescriptor[] = await client.getFileList({
-      Status: "NEW"
-    });
-
-    console.log(`Found ${files.length} files`);
-
-    const batchRequests = [];
-
-    for (const chunk of getFileChunk(files, ["INFO", "RI", "TL", "XI"])) {
-      console.log(`Scheduling ${chunk.length} items`);
-
-      const batch = chunk.map(item => ({
-        type: TaskType.DownloadFile,
-        payload: item
-      }));
-
-      const requests = sqs
-        .sendMessageBatch({
-          QueueUrl: queueUrl,
-          Entries: batch.map((message, index) => ({
-            MessageBody: JSON.stringify(message),
-            Id: index.toString()
-          }))
-        })
-        .promise();
-
-      batchRequests.push(requests);
+    if (event.resources.some((element) => element.endsWith("key-check"))) {
+      if (isAboutToExpire(key)) {
+        await postSlackMessage(
+          {
+            blocks: [
+              {
+                type: "header",
+                text: {
+                  type: "plain_text",
+                  text: "Pankkilinkki avain on vanhenemassa ⚠️",
+                  emoji: true,
+                },
+              },
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `> Avain vanhenee ${key
+                    .expires()
+                    .toLocaleString("fi-FI")}`,
+                },
+              },
+            ],
+          },
+          "info"
+        );
+      } else {
+        await postSlackMessage(
+          {
+            blocks: [
+              {
+                type: "section",
+                text: {
+                  type: "mrkdwn",
+                  text: `Pankkilinkki avain vanhenee ${key
+                    .expires()
+                    .toLocaleString("fi-FI")}`,
+                },
+              },
+            ],
+          },
+          "logs"
+        );
+      }
     }
 
-    await Promise.all(batchRequests);
+    if (event.resources.some((element) => element.endsWith("poll"))) {
+      // Enqueue files for download.
+      const queueUrl = await sqs
+        .getQueueUrl({ QueueName: QUEUE! })
+        .promise()
+        .then(({ QueueUrl }) => {
+          if (!QueueUrl) {
+            throw new Error(`Error getting queue url for sqs://${QUEUE}`);
+          }
+
+          return QueueUrl;
+        });
+
+      console.log(`Fetching list of files`);
+
+      const files: FileDescriptor[] = await client.getFileList({
+        Status: "NEW",
+      });
+
+      console.log(`Found ${files.length} files`);
+
+      const batchRequests = [];
+
+      for (const chunk of getFileChunk(files, ["INFO", "RI", "TL", "XI"])) {
+        console.log(`Scheduling ${chunk.length} items`);
+
+        const batch = chunk.map((item) => ({
+          type: TaskType.DownloadFile,
+          payload: item,
+        }));
+
+        const requests = sqs
+          .sendMessageBatch({
+            QueueUrl: queueUrl,
+            Entries: batch.map((message, index) => ({
+              MessageBody: JSON.stringify(message),
+              Id: index.toString(),
+            })),
+          })
+          .promise();
+
+        batchRequests.push(requests);
+      }
+
+      await Promise.all(batchRequests);
+    }
   } else {
     throw new Error(`Unrecognized event ${JSON.stringify(event)}`);
   }

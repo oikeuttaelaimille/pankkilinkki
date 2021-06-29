@@ -3,7 +3,6 @@ service: pankkilinkki
 useDotenv: true
 
 plugins:
-  - serverless-dotenv-plugin
   - serverless-webpack
   - serverless-python-requirements
 
@@ -12,7 +11,8 @@ provider:
   region: eu-north-1
   stage: ${opt:stage, 'dev'}
 
-  lambdaHashingVersion: 20201221
+  lambdaHashingVersion:
+    20201221
 
     # Set the default RetentionInDays for a CloudWatch LogGroup
   logRetentionInDays: 365
@@ -35,12 +35,15 @@ provider:
             - Fn::GetAtt: [TaskQueue, Arn]
         - Effect: "Allow"
           Action:
-            - s3:ListBucket
             - s3:PutObject
             - s3:GetObject
             - s3:DeleteObject
           Resource:
             Fn::Join: ["", ["arn:aws:s3:::", "${self:custom.bucketName}", "/*"]]
+        - Effect: "Allow"
+          Action:
+            - "s3:ListBucket"
+          Resource: "arn:aws:s3:::*"
 
 custom:
   queueName: pankkilinkki-${self:provider.stage}
@@ -68,7 +71,6 @@ functions:
     description: Pankkilinkki - handle downloaded files
     environment:
       ENDPOINT: ${env:ENDPOINT, 'http://localhost:8000'}
-      API_KEY: ${env:API_KEY}
       API_KEY_B64: ${env:API_KEY_B64}
     events:
       - s3:
