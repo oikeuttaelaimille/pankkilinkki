@@ -144,7 +144,7 @@ async function postSlackMessage(message: any, channel: "logs" | "info") {
 
 function isAboutToExpire(key: Key) {
   const dateToCheck = new Date();
-  dateToCheck.setMonth(dateToCheck.getMonth() + 2);
+  dateToCheck.setMonth(dateToCheck.getMonth() + 5);
   return key.expires() < dateToCheck;
 }
 

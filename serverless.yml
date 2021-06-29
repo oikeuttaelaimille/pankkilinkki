@@ -94,7 +94,7 @@ functions:
           enabled: true
           name: poll
       - schedule:
-          rate: rate(10 minutes)
+          rate: rate(30 days)
           enabled: true
           name: key-check
       - sqs:
