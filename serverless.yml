@@ -3,6 +3,7 @@ service: pankkilinkki
 useDotenv: true
 
 plugins:
+  - serverless-dotenv-plugin
   - serverless-webpack
   - serverless-python-requirements
 
@@ -11,8 +12,16 @@ provider:
   region: eu-north-1
   stage: ${opt:stage, 'dev'}
 
-  logRetentionInDays: 180
   lambdaHashingVersion: 20201221
+
+    # Set the default RetentionInDays for a CloudWatch LogGroup
+  logRetentionInDays: 365
+
+  environment:
+    # Stage defined with serverless command line flag.
+    STAGE: ${opt:stage, 'dev'}
+    SLACK_WEBHOOK_LOGS: ${env:SLACK_WEBHOOK_LOGS}
+    SLACK_WEBHOOK_INFO: ${env:SLACK_WEBHOOK_INFO}
 
   iam:
     role:
@@ -41,6 +50,9 @@ custom:
     dockerImage: lambci/lambda:build-python3.8
     noDeploy:
       - futures
+      - yapf
+      - flake8
+      - boto3
 
 # Create resources with CloudFormation templates
 resources:
@@ -56,13 +68,15 @@ functions:
     description: Pankkilinkki - handle downloaded files
     environment:
       ENDPOINT: ${env:ENDPOINT, 'http://localhost:8000'}
-      API_KEY: ${env:API_KEY, 'secret'}
+      API_KEY: ${env:API_KEY}
+      API_KEY_B64: ${env:API_KEY_B64}
     events:
       - s3:
           bucket: ${self:custom.bucketName}
           event: s3:ObjectCreated:*
           rules:
             - prefix: files/
+
   linkki:
     handler: linkki.handler
     runtime: nodejs14.x
@@ -70,8 +84,8 @@ functions:
     environment:
       BUCKET: ${self:custom.bucketName}
       QUEUE: ${self:custom.queueName}
-      USERNAME: ${env:PANKKILINKKI_USERNAME, '10000'}
-      LANGUAGE: "FI"
+      USERNAME: ${env:PANKKILINKKI_USERNAME}
+      LANGUAGE: ${env:PANKKILINKKI_LANGUAGE, "FI"}
     events:
       - schedule:
           rate: rate(12 hours)

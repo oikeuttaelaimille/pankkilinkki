@@ -1,4 +1,6 @@
 # boto3 is already installed
+boto3
 simplejson
 requests
+xmltodict
 lxml

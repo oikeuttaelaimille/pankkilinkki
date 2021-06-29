@@ -1,132 +1,70 @@
+import boto3
+import base64
 import simplejson as json
 import os
 import requests
-import boto3
-from collections import namedtuple
-from datetime import datetime
-from decimal import Decimal
-from enum import Enum
 from pathlib import Path
-from io import StringIO
 
+from finvoice.tapahtumaluettelo import TapahtumaLuettelo
+from finvoice.bank_file import parse as parse_bank_file
+from finvoice.receiver_info import make_receiver_info_message
 
-class Rahayksikko(Enum):
-    EURO = 1
-
-
-class Tila(Enum):
-    ONNISTUNUT = 0
-    TILIA_EI_LOYDY = 1
-    KATE_EI_RIITA = 2
-    EI_MAKSUPALVELUTILI = 3
-    MAKSAJA_PERUUTTANUT = 4
-    PANKKI_PERUUTTANUT = 5
-    PERUUTUS_EI_KOHDISTU = 6
-    VALTUUTUS_PUUTTUU = 7
-    ERAPAIVAVIRHE = 8
-    MUOTOVIRHE = 9
-
-
-class TapahtumaLuettelo:
-    Row = namedtuple(
-        "Row",
-        [
-            "tilinumero",
-            "kirjauspv",
-            "maksupv",
-            "arkistointitunnus",
-            "viite",
-            "nimi",
-            "rahayksikko",
-            "nimen_lahde",
-            "summa",
-            "oikaisutunnus",
-            "valitystapa",
-            "tila",
-        ],
-    )
-
-    @classmethod
-    def parse(cls, content):
-        with StringIO(content) as buffer:
-            return cls(buffer)
-
-    def _to_decimal(self, field):
-        return Decimal("{}.{}".format(field[:-2], field[-2:]))
-
-    def _read_footer(self, footer):
-        self.viitetap_kpl += int(footer[1:7])
-        self.viitetap_summa += self._to_decimal(footer[7:18])
-        self.viiteoik_kpl += int(footer[18:24])
-        self.viiteoik_summa += self._to_decimal(footer[24:35])
-        self.epaonnis_kpl += int(footer[35:41])
-        self.epaonnis_summa += self._to_decimal(footer[41:52])
-
-    def _read_header(self, header):
-        self.kirjoituspv = datetime.strptime(header[1:11], "%y%m%d%H%M")
-
-    def _read_row(self, line):
-        self._rows.append(
-            self.Row(
-                tilinumero=line[1:15],
-                kirjauspv=datetime.strptime(line[15:21], "%y%m%d").date(),
-                maksupv=datetime.strptime(line[21:27], "%y%m%d").date(),
-                arkistointitunnus=line[27:43],
-                viite=line[43:63].lstrip("0"),
-                nimi=line[63:75].replace("[", "Ä").replace("\\", "Ö").rstrip(),
-                rahayksikko=Rahayksikko(int(line[75:76])),
-                nimen_lahde=line[76:77],
-                summa=self._to_decimal(line[77:87]),
-                oikaisutunnus=int(line[87:88]),
-                valitystapa=line[88:89],
-                tila=Tila(int(line[89:90].strip() or 0)),
-            ))
-
-    def __init__(self, buffer):
-        self._rows = []
-        self.viitetap_kpl = 0
-        self.viiteoik_kpl = 0
-        self.epaonnis_kpl = 0
-        self.viitetap_summa = Decimal(0)
-        self.viiteoik_summa = Decimal(0)
-        self.epaonnis_summa = Decimal(0)
-
-        for line in buffer.readlines():
-            # Skip empty lines
-            if not line.strip():
-                continue
-            # Check header magic
-            elif line[0] == "0":
-                self._read_header(line)
-            # Footer magic
-            elif line[0] == "9":
-                self._read_footer(line)
-            else:
-                self._read_row(line)
-
-    def __getitem__(self, index):
-        return self._rows[index]
-
-    def __iter__(self):
-        return iter(self._rows)
-
-    def __len__(self):
-        return len(self._rows)
-
-
+STAGE = os.environ.get('STAGE', default='dev')
 ENDPOINT = os.environ['ENDPOINT']
-API_KEY = os.environ['API_KEY']
+API_KEY = os.environ.get('API_KEY', default=base64.b64decode(os.environ['API_KEY_B64']).decode())
+SLACK_WEBHOOK_LOGS = os.environ['SLACK_WEBHOOK_LOGS']
+SLACK_WEBHOOK_INFO = os.environ['SLACK_WEBHOOK_INFO']
+
+WINDOWS_LINE_ENDING = b'\r\n'
+UNIX_LINE_ENDING = b'\n'
 
 
 def is_s3_event(event) -> bool:
     return 'Records' in event and all('s3' in r for r in event['Records'])
 
 
-def handle_info(data):
-    print(data.decode('utf-8'))
+def handle_info(data, key):
+    MESSAGE_MAX_LENGHT = 3000
+
+    header, _, body = data.replace(WINDOWS_LINE_ENDING, UNIX_LINE_ENDING).decode('utf-8').partition("\n")
+
+    # Sometimes bank messages have translations separated by newlines.
+    body_first, _, _ = body.partition('\n\n\n')
+
+    # Max length
+    if len(body_first) > MESSAGE_MAX_LENGHT:
+        body_first = (body_first[:(MESSAGE_MAX_LENGHT - 3)] + '...')
+
+    print(header + "\n" + body)
+
+    message = {
+        "blocks": [{
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": '*Viesti pankilta: ' + header + '*'
+            }
+        }, {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": body_first
+            }
+        }, {
+            "type": "context",
+            "elements": [{
+                "type": "mrkdwn",
+                "text": f"pankkilinkki-{STAGE} ({key})"
+            }]
+        }]
+    }
+
+    r = requests.post(SLACK_WEBHOOK_INFO, json=message)
+
+    print(r.status_code)
 
 
-def handle_tl(data):
+def handle_tl(data, key):
     events = TapahtumaLuettelo.parse(data.decode('ascii'))
 
     payload = {
@@ -154,12 +92,34 @@ def handle_tl(data):
     print(f'Modified {res} records')
 
 
-def handle_xi(data):
+def handle_xi(data, key):
     raise Exception('Not implemented yet')
 
 
-def handle_ri(data):
-    raise Exception('Not implemented yet')
+def handle_ri(data, key):
+    messages = {'messages': []}
+
+    # Parse xml documents in file
+    for document in parse_bank_file(data):
+        # Get name of the root tag without namespace prefix
+        messages['messages'].append(make_receiver_info_message(document))
+
+    print(json.dumps(messages, indent=4, ensure_ascii=False))
+
+    # Post data to salesforce
+    res = requests.post(
+        f'{ENDPOINT}/rekisteri/',
+        params={'action': 'finvoice'},
+        headers={
+            'API-Key': API_KEY,
+        },
+        json=messages,
+    )
+
+    print(res.json())
+
+    # Raise exception if error occured.
+    res.raise_for_status()
 
 
 def handler(event, context):
@@ -171,38 +131,58 @@ def handler(event, context):
 
     s3 = boto3.client('s3')
 
-    file_handlers = {
-        'INFO': handle_info,
-        'TL': handle_tl,
-        'XI': handle_xi,
-        'RI': handle_ri
-    }
+    file_handlers = {'INFO': handle_info, 'TL': handle_tl, 'XI': handle_xi, 'RI': handle_ri}
 
     for record in event['Records']:
-        bucket = record['s3']['bucket']['name']
-        key = record['s3']['object']['key']
-        file_type = Path(key).suffix.upper().lstrip('.')
+        try:
+            bucket = record['s3']['bucket']['name']
+            key = record['s3']['object']['key']
+            file_type = Path(key).suffix.upper().lstrip('.')
 
-        if file_type not in file_handlers:
-            raise Exception(f'"{file_type}" file type is not recognized')
+            if file_type not in file_handlers:
+                raise Exception(f'"{file_type}" file type is not recognized')
 
-        print(f'Downloading s3://{bucket}/{key}')
-        response = s3.get_object(Bucket=bucket, Key=key)
-        body = response['Body'].read()
+            print(f'Downloading s3://{bucket}/{key}')
+            response = s3.get_object(Bucket=bucket, Key=key)
+            body = response['Body'].read()
 
-        print(f'Processing {key}')
-        file_handlers[file_type](body)
+            print(f'Processing {key}')
+            file_handlers[file_type](body, key)
+        except Exception as err:
+            requests.post(SLACK_WEBHOOK_LOGS,
+                          json={
+                              "blocks": [{
+                                  "type": "section",
+                                  "text": {
+                                      "type": "mrkdwn",
+                                      "text": '*Pankkilinkki error :broken_heart:*'
+                                  }
+                              }, {
+                                  "type": "section",
+                                  "text": {
+                                      "type": "mrkdwn",
+                                      "text": str(err)
+                                  }
+                              }, {
+                                  "type": "context",
+                                  "elements": [{
+                                      "type": "mrkdwn",
+                                      "text": f"pankkilinkki-{STAGE} ({key})"
+                                  }]
+                              }]
+                          })
+
+            raise
 
 
 def main():
-    parser = argparse.ArgumentParser("simple_example")
-    parser.add_argument(
-        "--path",
-        help=(
-            "The path to a json file holding input data to be passed to the " +
-            "invoked function as the event."
-        ),
-        type=argparse.FileType('r'))
+    import argparse
+
+    parser = argparse.ArgumentParser("simple example")
+    parser.add_argument("--path",
+                        help=("The path to a json file holding input data to be passed to the " +
+                              "invoked function as the event."),
+                        type=argparse.FileType('r'))
     args = parser.parse_args()
     print(args)
 
@@ -212,6 +192,4 @@ def main():
 
 
 if __name__ == '__main__':
-    import argparse
-
     main()
