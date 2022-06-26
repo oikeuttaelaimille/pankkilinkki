@@ -27,6 +27,6 @@
   "author": "Santeri Hurnanen <santeri@oikeuttaelaimille.fi>",
   "license": "MIT",
   "dependencies": {
-    "node-fetch": "^2.6.1"
+    "node-fetch": "^2.6.7"
   }
 }
